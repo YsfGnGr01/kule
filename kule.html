@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cesium Kamera Görüş Analizi</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.109/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.109/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+    }
+    #coordPanel {
+      position: absolute;
+      top: 10px; left: 10px;
+      background: white;
+      padding: 10px;
+      z-index: 999;
+      border-radius: 6px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+    #coordPanel input { width: 120px; margin-right: 5px; }
+  </style>
+</head>
+<body>
+<div id="coordPanel">
+  Lat: <input id="latInput" type="text" placeholder="37.000">
+  Lon: <input id="lonInput" type="text" placeholder="36.000">
+  <button onclick="setTargetByCoord()">Göster</button>
+</div>
+<div id="cesiumContainer"></div>
+<script>
+  const viewer = new Cesium.Viewer('cesiumContainer', {
+    terrainProvider: Cesium.createWorldTerrain(),
+    shouldAnimate: true
+  });
+
+  const cameras = [
+    { id: 'K001', lat: 37.000, lon: 36.000, height: 100 },
+    { id: 'K002', lat: 37.200, lon: 36.000, height: 100 },
+    { id: 'K003', lat: 37.000, lon: 36.300, height: 100 },
+    { id: 'K004', lat: 36.800, lon: 36.000, height: 100 },
+    { id: 'K005', lat: 37.000, lon: 35.700, height: 100 },
+    { id: 'K006', lat: 37.100, lon: 36.100, height: 100 },
+    { id: 'K007', lat: 36.900, lon: 36.100, height: 100 },
+    { id: 'K008', lat: 37.100, lon: 35.900, height: 100 },
+    { id: 'K009', lat: 36.900, lon: 35.900, height: 100 },
+    { id: 'K010', lat: 37.050, lon: 36.050, height: 100 }
+  ];
+
+  cameras.forEach(cam => {
+    viewer.entities.add({
+      id: cam.id,
+      position: Cesium.Cartesian3.fromDegrees(cam.lon, cam.lat, cam.height),
+      point: { pixelSize: 10, color: Cesium.Color.YELLOW },
+      label: { text: cam.id, verticalOrigin: Cesium.VerticalOrigin.BOTTOM }
+    });
+  });
+
+  let targetPoint = null;
+  const lines = [];
+
+  async function analyzeVisibility(lat, lon) {
+    if (targetPoint) viewer.entities.remove(targetPoint);
+    lines.forEach(line => viewer.entities.remove(line));
+    lines.length = 0;
+
+    targetPoint = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
+      point: { pixelSize: 10, color: Cesium.Color.RED },
+      label: { text: 'HEDEF', verticalOrigin: Cesium.VerticalOrigin.TOP }
+    });
+
+    for (const cam of cameras) {
+      const positions = [
+        [cam.lon, cam.lat],
+        [lon, lat]
+      ];
+      const cartoPositions = positions.map(([x, y]) => new Cesium.Cartographic(Cesium.Math.toRadians(x), Cesium.Math.toRadians(y)));
+      const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, cartoPositions);
+
+      const camAlt = updated[0].height + cam.height;
+      const targetAlt = updated[1].height;
+
+      const blocked = isBlocked(camAlt, targetAlt, updated);
+
+      const line = viewer.entities.add({
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+            cam.lon, cam.lat, camAlt,
+            lon, lat, targetAlt
+          ]),
+          width: 3,
+          material: blocked ? Cesium.Color.RED : Cesium.Color.LIME
+        }
+      });
+      lines.push(line);
+    }
+  }
+
+  function isBlocked(h1, h2, profile) {
+    const len = profile.length;
+    for (let i = 1; i < len - 1; i++) {
+      const xi = i / (len - 1);
+      const expected = h1 + (h2 - h1) * xi;
+      if (profile[i].height > expected + 10) return true;
+    }
+    return false;
+  }
+
+  function setTargetByCoord() {
+    const lat = parseFloat(document.getElementById('latInput').value);
+    const lon = parseFloat(document.getElementById('lonInput').value);
+    if (!isNaN(lat) && !isNaN(lon)) {
+      viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat, 10000) });
+      analyzeVisibility(lat, lon);
+    }
+  }
+
+  viewer.screenSpaceEventHandler.setInputAction(function (movement) {
+    const pos = viewer.scene.pickPosition(movement.position);
+    if (pos) {
+      const carto = Cesium.Cartographic.fromCartesian(pos);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+      document.getElementById('latInput').value = lat.toFixed(6);
+      document.getElementById('lonInput').value = lon.toFixed(6);
+      analyzeVisibility(lat, lon);
+    }
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+</script>
+</body>
+</html>
